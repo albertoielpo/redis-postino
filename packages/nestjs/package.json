@@ -39,7 +39,7 @@
     "audit:prod": "npm audit --omit=dev"
   },
   "dependencies": {
-    "redis-postino": "0.0.0"
+    "redis-postino": "^1.0.0"
   },
   "devDependencies": {
     "@nestjs/common": "~12.6.2",

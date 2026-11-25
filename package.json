@@ -19,8 +19,11 @@
     "lint:fix": "eslint ./packages --fix",
     "format": "prettier . --write",
     "prepare": "husky",
-    "publish-all": "lerna publish",
-    "audit:prod": "lerna run audit:prod"
+    "publish-all": "lerna run build && lerna publish",
+    "audit:prod": "lerna run audit:prod",
+    "version:patch": "lerna version patch",
+    "version:minor": "lerna version minor",
+    "version:major": "lerna version major"
   },
   "devDependencies": {
     "@eslint/compat": "~2.1.1",

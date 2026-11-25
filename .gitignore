@@ -5,3 +5,4 @@ lib
 *.tgz
 .nx/cache
 .nx
+lerna-debug.log
