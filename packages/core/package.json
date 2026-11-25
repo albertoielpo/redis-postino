@@ -1,6 +1,6 @@
 {
   "name": "redis-postino",
-  "version": "0.0.0",
+  "version": "1.0.0",
   "description": "Redis pub/sub messaging with load-balanced at-most-once delivery, broadcast, dead letter queue and error queue.",
   "keywords": [
     "redis",
