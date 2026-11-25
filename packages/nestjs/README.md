@@ -1,0 +1,128 @@
+# nestjs-redis-postino
+
+NestJS module for [`redis-postino`](https://www.npmjs.com/package/redis-postino): decorator-based Redis pub/sub for microservices.
+
+- **Load-balanced unicast:** each message goes to **one** random live instance of the subscribing service (at-most-once).
+- **Broadcast:** optionally, deliver to **every** live instance.
+- **Dead letter queue** and **error queue** stored in Redis.
+- **Typed channels** through generics, injected with a decorator.
+- **Self-healing** subscriber connection.
+
+## Requirements
+
+- Node.js **>= 24.15**
+- NestJS **12**
+- Redis **>= 7.2**, standalone. **Redis Cluster is not supported.**
+- ESM only. Node.js 24 can also `require()` it from CommonJS.
+
+## Installation
+
+```bash
+npm i nestjs-redis-postino
+```
+
+## Quick start
+
+### 1. Register the module once (it is global)
+
+```ts
+import { Module } from '@nestjs/common';
+import { ConfigModule, ConfigService } from '@nestjs/config';
+import { PostinoModule } from 'nestjs-redis-postino';
+
+@Module({
+  imports: [
+    ConfigModule.forRoot(),
+    PostinoModule.forRootAsync({
+      imports: [ConfigModule],
+      inject: [ConfigService],
+      useFactory: (config: ConfigService) => ({
+        connection: {
+          host: config.getOrThrow<string>('REDIS_HOST'),
+          port: 6379,
+        },
+      }),
+    }),
+    OrdersModule,
+  ],
+})
+export class AppModule {}
+```
+
+`PostinoModule.forRoot(options)` accepts the same options synchronously.
+
+### 2. Publish
+
+Register every channel you publish on, then inject it with `@InjectPostinoChannel()`:
+
+```ts
+import { Injectable, Module } from '@nestjs/common';
+import { InjectPostinoChannel, PostinoChannel, PostinoModule } from 'nestjs-redis-postino';
+
+interface OrderCreated {
+  id: number;
+}
+
+@Injectable()
+export class OrdersService {
+  constructor(@InjectPostinoChannel('orders') private readonly orders: PostinoChannel<OrderCreated>) {}
+
+  async create() {
+    const { success, error } = await this.orders.publish({ id: 42 });
+    // broadcast to every live instance: this.orders.publish(payload, false, true)
+  }
+}
+
+@Module({
+  imports: [PostinoModule.registerChannel('orders')],
+  providers: [OrdersService],
+})
+export class OrdersModule {}
+```
+
+`publish(message, retry = false, broadcast = false)` **never throws**. It returns `{ success: boolean; error?: string }`.
+`retry` is only stored in the dead letter queue entry, so a job can decide what to resend. Nothing is retried automatically.
+
+### 3. Subscribe
+
+```ts
+import { Injectable } from '@nestjs/common';
+import { PostinoSubscribe, PostinoSubscriberHost } from 'nestjs-redis-postino';
+
+@Injectable()
+@PostinoSubscriberHost()
+export class OrdersSubscriber {
+  @PostinoSubscribe('orders')
+  async onOrderCreated(order: OrderCreated) {
+    // ...
+  }
+}
+```
+
+- `@PostinoSubscriberHost()` marks the provider; `@PostinoSubscribe(channel)` marks the handler methods.
+- One handler per channel per application: if two methods subscribe to the same channel, only the first one found is used.
+- Handlers can be `async`; they are awaited.
+- Handlers are wrapped in a try/catch. A failure is logged and stored in the error queue. Don't catch errors yourself if you want them in the error queue.
+- Application bootstrap waits for the subscriptions. If Redis is unreachable, the handlers are subscribed as soon as the connection heals.
+
+## Options
+
+| Option                                    | Default                                                       | Description                                                                                 |
+| ----------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| `connection.host` / `port`                | `localhost` / `6379`                                          | Redis server                                                                                |
+| `connection.username` / `password` / `db` | –                                                             | ACL credentials and database                                                                |
+| `connection.tls`                          | –                                                             | `true` or Node.js TLS options                                                               |
+| `connection.connectTimeout`               | `5000`                                                        | ms                                                                                          |
+| `connection.keepAlive`                    | `5000`                                                        | TCP keep-alive initial delay in ms, `0` disables it                                         |
+| `connection.commandTimeout`               | `3000`                                                        | ms a command may wait to be sent (e.g. while reconnecting), `0` disables it                 |
+| `connection.reconnect`                    | `{ maxAttempts: 10, delayMs: 1000 }`                          | linear backoff; after the last attempt the subscriber self-heals (5 s, doubling up to 60 s) |
+| `clientOptions`                           | –                                                             | raw node-redis client options, merged last                                                  |
+| `dispatchAndClose`                        | `false`                                                       | open a dedicated connection per publish and close it afterwards                             |
+| `deadLetterQueue`                         | `{ enable: true, name: 'postino-dlq', ttlInSeconds: 604800 }` | undelivered unicast messages                                                                |
+| `errorQueue`                              | `{ enable: true, name: 'postino-eq', ttlInSeconds: 604800 }`  | messages whose handler threw                                                                |
+
+The queue formats and a reader example are in the [`redis-postino` README](https://www.npmjs.com/package/redis-postino#queues).
+
+## License
+
+MIT

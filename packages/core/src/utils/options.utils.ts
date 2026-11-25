@@ -1,0 +1,71 @@
+import type { RedisClientOptions } from 'redis';
+import type { PostinoRawClientOptions, PostinoConnectionOptions, PostinoOptions, PostinoOptionsInput } from '../types/options.type.js';
+import { DEFAULT_OPTIONS } from '../types/options.type.js';
+
+/** Applies the defaults to the user options. Nested objects are merged, not replaced. */
+export function resolveOptions(input: PostinoOptionsInput = {}): PostinoOptions {
+  const connection: PostinoConnectionOptions = {
+    ...DEFAULT_OPTIONS.connection,
+    ...input.connection,
+    reconnect: {
+      ...DEFAULT_OPTIONS.connection.reconnect,
+      ...input.connection?.reconnect,
+    },
+  };
+
+  return {
+    connection,
+    clientOptions: input.clientOptions,
+    deadLetterQueue: {
+      ...DEFAULT_OPTIONS.deadLetterQueue,
+      ...input.deadLetterQueue,
+    },
+    errorQueue: {
+      ...DEFAULT_OPTIONS.errorQueue,
+      ...input.errorQueue,
+    },
+    dispatchAndClose: typeof input.dispatchAndClose === 'boolean' ? input.dispatchAndClose : DEFAULT_OPTIONS.dispatchAndClose,
+  };
+}
+
+/**
+ * node-redis reconnect strategy: linear backoff (`attempt * delayMs`), gives up after `maxAttempts`.
+ * `retries` is 0-based (node-redis), `attempt` is 1-based.
+ */
+export function buildReconnectStrategy({ maxAttempts, delayMs }: PostinoConnectionOptions['reconnect']) {
+  return (retries: number): number | false => {
+    const attempt = retries + 1;
+    if (attempt > maxAttempts) {
+      return false;
+    }
+
+    return attempt * delayMs;
+  };
+}
+
+/** Maps the library options to node-redis client options. `clientOptions` is merged last. */
+export function toRedisClientOptions(options: PostinoOptions, clientName?: string): PostinoRawClientOptions {
+  const { connection, clientOptions } = options;
+  const tls = connection.tls ? { tls: true as const, ...(typeof connection.tls === 'object' ? connection.tls : {}) } : {};
+
+  const socket = {
+    host: connection.host,
+    port: connection.port,
+    connectTimeout: connection.connectTimeout,
+    keepAlive: connection.keepAlive > 0,
+    ...(connection.keepAlive > 0 ? { keepAliveInitialDelay: connection.keepAlive } : {}),
+    reconnectStrategy: buildReconnectStrategy(connection.reconnect),
+    ...tls,
+    ...clientOptions?.socket,
+  } as RedisClientOptions['socket'];
+
+  return {
+    username: connection.username,
+    password: connection.password,
+    database: connection.db,
+    name: clientName,
+    ...(connection.commandTimeout > 0 ? { commandOptions: { timeout: connection.commandTimeout } } : {}),
+    ...clientOptions,
+    socket,
+  };
+}

@@ -1,0 +1,63 @@
+{
+  "name": "nestjs-redis-postino",
+  "version": "0.0.0",
+  "description": "NestJS module for redis-postino: decorator-based Redis pub/sub with load-balanced at-most-once delivery, broadcast, dead letter queue and error queue.",
+  "keywords": [
+    "nestjs",
+    "nest",
+    "redis",
+    "pubsub",
+    "pub-sub",
+    "messaging",
+    "microservices",
+    "dead-letter-queue"
+  ],
+  "author": "Elevate S.R.L. aka Ennova Research S.R.L.",
+  "contributors": [
+    "Alberto Ielpo <alberto.ielpo@i-elevate.com>",
+    "Davide Stefania <davide.stefania@i-elevate.com>"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "!lib/**/*.map"
+  ],
+  "scripts": {
+    "build": "rm -rf lib && tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:cov": "vitest run --coverage",
+    "audit:prod": "npm audit --omit=dev"
+  },
+  "dependencies": {
+    "redis-postino": "0.0.0"
+  },
+  "devDependencies": {
+    "@nestjs/common": "~12.6.2",
+    "@nestjs/core": "~12.6.2",
+    "@nestjs/testing": "~12.6.2",
+    "reflect-metadata": "~0.2.2",
+    "rxjs": "~7.8.2"
+  },
+  "peerDependencies": {
+    "@nestjs/common": ">=12.0.0 <13.0.0",
+    "@nestjs/core": ">=12.0.0 <13.0.0",
+    "reflect-metadata": "^0.2.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "engines": {
+    "node": ">=24.15"
+  }
+}

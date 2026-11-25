@@ -1,0 +1,51 @@
+{
+  "name": "redis-postino",
+  "version": "0.0.0",
+  "description": "Redis pub/sub messaging with load-balanced at-most-once delivery, broadcast, dead letter queue and error queue.",
+  "keywords": [
+    "redis",
+    "pubsub",
+    "pub-sub",
+    "messaging",
+    "microservices",
+    "dead-letter-queue",
+    "node-redis"
+  ],
+  "author": "Elevate S.R.L. aka Ennova Research S.R.L.",
+  "contributors": [
+    "Alberto Ielpo <alberto.ielpo@i-elevate.com>",
+    "Davide Stefania <davide.stefania@i-elevate.com>"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "./lib/index.js",
+  "types": "./lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "!lib/**/*.map"
+  ],
+  "sideEffects": false,
+  "scripts": {
+    "build": "rm -rf lib && tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:cov": "vitest run --coverage",
+    "audit:prod": "npm audit --omit=dev"
+  },
+  "dependencies": {
+    "redis": "~6.4.0"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "engines": {
+    "node": ">=24.15"
+  }
+}
