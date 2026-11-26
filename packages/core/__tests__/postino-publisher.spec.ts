@@ -81,7 +81,7 @@ describe('PostinoPublisher', () => {
       client.pubSubChannels.mockResolvedValue(['orders:a', 'orders:b']);
       client.publish.mockResolvedValue(0);
 
-      const result = await publisher.publish({ channel: 'orders', payload: { n: 1 } }, true);
+      const result = await publisher.publish({ channel: 'orders', payload: { n: 1 } }, { retryable: true });
 
       expect(result.success).toBe(false);
       expect(result.error).toMatch(/delivery failed on every subscriber/);
@@ -90,6 +90,18 @@ describe('PostinoPublisher', () => {
         message: { n: 1 },
         retry: true,
       });
+    });
+
+    it('still accepts the deprecated positional (retry, broadcast) booleans', async () => {
+      const publisher = await createPublisher();
+
+      await publisher.publish({ channel: 'orders', payload: 'p' }, true);
+      expect(queue.addToQueue).toHaveBeenCalledWith(expect.anything(), expect.any(String), { channel: 'orders', message: 'p', retry: true });
+
+      const client = publisherClient();
+      client.pubSubChannels.mockResolvedValue(['orders:a', 'orders:b']);
+      await publisher.publish({ channel: 'orders', payload: {} }, false, true);
+      expect(client.publish.mock.calls.map(([target]) => target).sort()).toEqual(['orders:a', 'orders:b']);
     });
 
     it('adds the message to the DLQ when there are no subscribers', async () => {
@@ -121,7 +133,7 @@ describe('PostinoPublisher', () => {
       const client = publisherClient();
       client.pubSubChannels.mockResolvedValue(['orders:a', 'orders:b']);
 
-      const result = await publisher.publish({ channel: 'orders', payload: {} }, false, true);
+      const result = await publisher.publish({ channel: 'orders', payload: {} }, { broadcast: true });
 
       expect(result).toEqual({ success: true });
       expect(client.publish.mock.calls.map(([target]) => target).sort()).toEqual(['orders:a', 'orders:b']);
@@ -134,7 +146,7 @@ describe('PostinoPublisher', () => {
       client.pubSubChannels.mockResolvedValue(['orders:a', 'orders:b']);
       client.publish.mockResolvedValueOnce(1).mockRejectedValueOnce(new Error('x'));
 
-      const result = await publisher.publish({ channel: 'orders', payload: {} }, false, true);
+      const result = await publisher.publish({ channel: 'orders', payload: {} }, { broadcast: true });
 
       expect(result).toEqual({ success: true });
       expect(logger.warn).toHaveBeenCalledWith(expect.stringContaining('Broadcasting successfull on 1/2'));
@@ -146,10 +158,10 @@ describe('PostinoPublisher', () => {
       client.pubSubChannels.mockResolvedValue(['orders:a']);
       client.publish.mockResolvedValue(0);
 
-      expect((await publisher.publish({ channel: 'orders', payload: {} }, false, true)).success).toBe(false);
+      expect((await publisher.publish({ channel: 'orders', payload: {} }, { broadcast: true })).success).toBe(false);
 
       client.pubSubChannels.mockResolvedValue([]);
-      expect((await publisher.publish({ channel: 'orders', payload: {} }, false, true)).success).toBe(false);
+      expect((await publisher.publish({ channel: 'orders', payload: {} }, { broadcast: true })).success).toBe(false);
       expect(queue.addToQueue).not.toHaveBeenCalled();
     });
   });
@@ -172,7 +184,7 @@ describe('PostinoPublisher', () => {
       });
       const publisher = await createPublisher({ dispatchAndClose: true });
 
-      await publisher.publish({ channel: 'orders', payload: {} }, false, broadcast);
+      await publisher.publish({ channel: 'orders', payload: {} }, { broadcast });
 
       const client = publisherClient();
       expect(client.connect).toHaveBeenCalledTimes(1);

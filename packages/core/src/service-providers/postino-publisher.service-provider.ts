@@ -3,11 +3,12 @@ import { randomUUID } from 'node:crypto';
 import { PostinoQueueFactory } from '../factories/postino-queue.factory.js';
 import type { PostinoLogger } from '../types/logger.type.js';
 import type { PostinoOptions, PostinoQueueOption } from '../types/options.type.js';
-import type { PostinoMessage, PostinoPublishDto, PostinoPublishResult } from '../types/publisher.type.js';
+import type { PostinoMessage, PostinoPublishDto, PostinoPublishOptions, PostinoPublishResult } from '../types/publisher.type.js';
 import type { PostinoRedisConnection } from '../types/redis-client.type.js';
 import { discoverSubscriberChannels, type PostinoSubscriberChannel } from '../utils/cluster.utils.js';
 import { createRedisConnection, LazyRedisConnection, safeQuit } from '../utils/connection.utils.js';
 import { describeTarget } from '../utils/options.utils.js';
+import { toPublishOptions } from '../utils/publish.utils.js';
 import type { PostinoQueue } from './postino-queue.service-provider.js';
 
 export class PostinoPublisher {
@@ -46,9 +47,18 @@ export class PostinoPublisher {
    * Never throws. When a unicast message cannot be delivered it is added to the dead letter queue.
    * In cluster mode the subscribers are discovered on every node and each message is published through
    * the node its subscriber is connected to (see `discoverSubscriberChannels`).
-   * @param retry stored in the dead letter queue entry, to flag it for a later retry
+   * @param options `retryable` (see {@link PostinoPublishOptions.retryable}: needs the DLQ enabled and a retry job
+   * you implement separately) and `broadcast`
    */
-  public async publish<T>(dto: PostinoPublishDto<T>, retry = false, broadcast = false): Promise<PostinoPublishResult> {
+  public async publish<T>(dto: PostinoPublishDto<T>, options?: PostinoPublishOptions): Promise<PostinoPublishResult>;
+  /** @deprecated use `publish(dto, { retryable, broadcast })` */
+  public async publish<T>(dto: PostinoPublishDto<T>, retry?: boolean, broadcast?: boolean): Promise<PostinoPublishResult>;
+  public async publish<T>(
+    dto: PostinoPublishDto<T>,
+    optionsOrRetry?: PostinoPublishOptions | boolean,
+    legacyBroadcast?: boolean,
+  ): Promise<PostinoPublishResult> {
+    const { retryable, broadcast } = toPublishOptions(optionsOrRetry, legacyBroadcast);
     const { payload, channel } = dto;
     const messageId = randomUUID();
     const messageToPublish: PostinoMessage<T> = {
@@ -66,11 +76,11 @@ export class PostinoPublisher {
         return await this.broadcast(messageId, channel, subscribers, serialized);
       }
 
-      return await this.unicast(messageId, dto, subscribers, serialized, retry);
+      return await this.unicast(messageId, dto, subscribers, serialized, retryable);
     } catch (err) {
       this.logger.error(`MessageId: ${messageId} | Publish on channel ${channel} failed: ${err}`);
       if (!broadcast) {
-        await this.addToDLQ(messageId, dto, retry);
+        await this.addToDLQ(messageId, dto, retryable);
       }
 
       return {
@@ -111,13 +121,13 @@ export class PostinoPublisher {
     dto: PostinoPublishDto<T>,
     subscribers: PostinoSubscriberChannel[],
     serialized: string,
-    retry: boolean,
+    retryable: boolean,
   ): Promise<PostinoPublishResult> {
     const { channel } = dto;
     this.logger.debug(`MessageId: ${messageId} | Adding message on channel ${channel} with ${subscribers.length} subscribers...`);
     if (!subscribers.length) {
       this.logger.error(`MessageId: ${messageId} | No active subscribers for channel: ${channel}`);
-      await this.addToDLQ(messageId, dto, retry);
+      await this.addToDLQ(messageId, dto, retryable);
       return {
         success: false,
         error: `MessageId: ${messageId} | No active subscribers for channel: ${channel}`,
@@ -143,7 +153,7 @@ export class PostinoPublisher {
     }
 
     this.logger.error(`MessageId: ${messageId} | Message delivery failed on every subscriber. Adding message ${messageId} to dead letter queue...`);
-    await this.addToDLQ(messageId, dto, retry);
+    await this.addToDLQ(messageId, dto, retryable);
 
     return {
       success: false,
@@ -151,11 +161,11 @@ export class PostinoPublisher {
     };
   }
 
-  private async addToDLQ<T>(messageId: string, message: PostinoPublishDto<T>, retry: boolean) {
+  private async addToDLQ<T>(messageId: string, message: PostinoPublishDto<T>, retryable: boolean) {
     return this.queueService.addToQueue(this.deadLetterQueueOptions, messageId, {
       channel: message.channel,
       message: message.payload,
-      retry,
+      retry: retryable, // DLQ wire format keeps the `retry` field (regression H2)
     });
   }
 

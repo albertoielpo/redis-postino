@@ -50,14 +50,21 @@ const publisher = PostinoPublisherFactory.getInstance(
 
 const { success, error } = await publisher.publish({ channel: 'orders', payload: { id: 42 } });
 
-// flag the message for a retry job if it ends up in the DLQ
-await publisher.publish({ channel: 'orders', payload: { id: 43 } }, true);
+// flag the message for a retry job if it ends up in the DLQ (see `retryable` below)
+await publisher.publish({ channel: 'orders', payload: { id: 43 } }, { retryable: true });
 
 // deliver to every live instance
-await publisher.publish({ channel: 'cache-invalidation', payload: { key: 'user:1' } }, false, true);
+await publisher.publish({ channel: 'cache-invalidation', payload: { key: 'user:1' } }, { broadcast: true });
 ```
 
-`publish(dto, retry = false, broadcast = false)` **never throws**. It returns `{ success: boolean; error?: string }`.
+`publish(dto, { retryable = false, broadcast = false })` **never throws**. It returns `{ success: boolean; error?: string }`.
+
+`retryable` is only stored as `retry` in the dead letter queue entry, so a job can decide what to resend. **Nothing is retried automatically.** It only works if:
+
+1. the dead letter queue is enabled (`deadLetterQueue.enable: true`). The error queue does not carry this flag;
+2. a retry job reads the DLQ. Postino does not ship one yet: for now it has to be implemented separately (see [Reading a queue](#queues)).
+
+It is ignored for broadcasts, which never go to the DLQ. The positional form `publish(dto, retry, broadcast)` still works but is deprecated.
 
 ## Subscribe to a channel
 
@@ -175,7 +182,7 @@ Dead letter queue entry:
 interface DeadLetterQueueEntry<T> {
   channel: string; // the channel
   message: T; // the payload
-  retry: boolean; // set by publish()
+  retry: boolean; // the `retryable` option of publish()
 }
 ```
 
@@ -199,7 +206,7 @@ for (let key = await redis.lPop('postino-dlq'); key; key = await redis.lPop('pos
   const data = await redis.get(key);
   if (!data) continue; // entry expired
   const { channel, message, retry } = JSON.parse(data);
-  // ...re-publish with PostinoPublisher if `retry` is true
+  // ...re-publish with PostinoPublisher if `retry` is true (your own retry job: none ships with Postino yet)
 }
 await redis.close();
 ```

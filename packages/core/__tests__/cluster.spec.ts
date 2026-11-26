@@ -304,7 +304,7 @@ describe('cluster mode', () => {
       cluster.masters[0].client.pubSubChannels.mockResolvedValue(['orders:a']);
       cluster.masters[1].client.pubSubChannels.mockResolvedValue(['orders:b']);
 
-      const result = await publisher.publish({ channel: 'orders', payload: {} }, false, true);
+      const result = await publisher.publish({ channel: 'orders', payload: {} }, { broadcast: true });
 
       expect(result).toEqual({ success: true });
       expect(cluster.masters[0].client.publish).toHaveBeenCalledWith('orders:a', expect.any(String));

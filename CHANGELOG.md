@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Changed
+
+- `publish()` (core `PostinoPublisher`, Nest `PostinoPublisherService` and `PostinoChannel`) takes an options object: `publish(message, { retryable, broadcast })`. `retry` is renamed `retryable`: it only flags the DLQ entry for a retry job, which is not shipped yet and must be implemented separately. The positional `(retry, broadcast)` booleans are deprecated but still accepted. The DLQ entry keeps its `retry` field.
+
 ### Added
 
 - **Experimental** Redis Cluster support (`cluster` option) in `redis-postino` and `nestjs-redis-postino`:

@@ -46,15 +46,26 @@ describe('decorators', () => {
 });
 
 describe('PostinoChannel', () => {
-  it('publishes on its channel forwarding retry and broadcast', async () => {
+  it('publishes on its channel forwarding retryable and broadcast', async () => {
     const publisher = { publish: vi.fn().mockResolvedValue({ success: true }) };
     const channel = new PostinoChannel<{ n: number }>(publisher as any, 'orders');
 
     await expect(channel.publish({ n: 1 })).resolves.toEqual({ success: true });
-    await channel.publish({ n: 2 }, true, true);
+    await channel.publish({ n: 2 }, { retryable: true, broadcast: true });
+    await channel.publish({ n: 3 }, { broadcast: true });
 
-    expect(publisher.publish).toHaveBeenNthCalledWith(1, { channel: 'orders', payload: { n: 1 } }, false, false);
-    expect(publisher.publish).toHaveBeenNthCalledWith(2, { channel: 'orders', payload: { n: 2 } }, true, true);
+    expect(publisher.publish).toHaveBeenNthCalledWith(1, { channel: 'orders', payload: { n: 1 } }, { retryable: false, broadcast: false });
+    expect(publisher.publish).toHaveBeenNthCalledWith(2, { channel: 'orders', payload: { n: 2 } }, { retryable: true, broadcast: true });
+    expect(publisher.publish).toHaveBeenNthCalledWith(3, { channel: 'orders', payload: { n: 3 } }, { retryable: false, broadcast: true });
+  });
+
+  it('still accepts the deprecated positional (retry, broadcast) booleans', async () => {
+    const publisher = { publish: vi.fn().mockResolvedValue({ success: true }) };
+    const channel = new PostinoChannel<{ n: number }>(publisher as any, 'orders');
+
+    await channel.publish({ n: 1 }, true, true);
+
+    expect(publisher.publish).toHaveBeenCalledWith({ channel: 'orders', payload: { n: 1 } }, { retryable: true, broadcast: true });
   });
 });
 
@@ -63,10 +74,12 @@ describe('services', () => {
     const core = { publish: vi.fn().mockResolvedValue({ success: true }), onApplicationShutdown: vi.fn() };
     const service = new PostinoPublisherService(core as any);
 
-    await service.publish({ channel: 'c', payload: 1 }, true, false);
+    await service.publish({ channel: 'c', payload: 1 }, { retryable: true });
+    await service.publish({ channel: 'c', payload: 2 }, false, true); // deprecated positional form
     await service.onApplicationShutdown();
 
-    expect(core.publish).toHaveBeenCalledWith({ channel: 'c', payload: 1 }, true, false);
+    expect(core.publish).toHaveBeenNthCalledWith(1, { channel: 'c', payload: 1 }, { retryable: true, broadcast: false });
+    expect(core.publish).toHaveBeenNthCalledWith(2, { channel: 'c', payload: 2 }, { retryable: false, broadcast: true });
     expect(core.onApplicationShutdown).toHaveBeenCalled();
   });
 

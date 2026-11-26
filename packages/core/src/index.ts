@@ -6,3 +6,4 @@ export * from './types/logger.type.js';
 export * from './types/options.type.js';
 export * from './types/publisher.type.js';
 export { resolveOptions } from './utils/options.utils.js';
+export { toPublishOptions } from './utils/publish.utils.js';

@@ -1,5 +1,5 @@
 import { Injectable, Logger, type OnApplicationShutdown } from '@nestjs/common';
-import type { PostinoPublishDto, PostinoPublisher, PostinoPublishResult } from 'redis-postino';
+import { type PostinoPublishDto, type PostinoPublisher, type PostinoPublishOptions, type PostinoPublishResult, toPublishOptions } from 'redis-postino';
 
 @Injectable()
 export class PostinoPublisherService implements OnApplicationShutdown {
@@ -7,8 +7,16 @@ export class PostinoPublisherService implements OnApplicationShutdown {
 
   constructor(private readonly corePublisher: PostinoPublisher) {}
 
-  public async publish<T>(dto: PostinoPublishDto<T>, retry = false, broadcast = false): Promise<PostinoPublishResult> {
-    return this.corePublisher.publish(dto, retry, broadcast);
+  /**
+   * Publish a message. Never throws.
+   * @param options `retryable` (see {@link PostinoPublishOptions.retryable}: needs the DLQ enabled and a retry job
+   * you implement separately) and `broadcast`
+   */
+  public async publish<T>(dto: PostinoPublishDto<T>, options?: PostinoPublishOptions): Promise<PostinoPublishResult>;
+  /** @deprecated use `publish(dto, { retryable, broadcast })` */
+  public async publish<T>(dto: PostinoPublishDto<T>, retry?: boolean, broadcast?: boolean): Promise<PostinoPublishResult>;
+  public async publish<T>(dto: PostinoPublishDto<T>, optionsOrRetry?: PostinoPublishOptions | boolean, broadcast?: boolean): Promise<PostinoPublishResult> {
+    return this.corePublisher.publish(dto, toPublishOptions(optionsOrRetry, broadcast));
   }
 
   public async onApplicationShutdown() {

@@ -88,7 +88,8 @@ export class OrdersService {
 
   async create() {
     const { success, error } = await this.orders.publish({ id: 42 });
-    // broadcast to every live instance: this.orders.publish(payload, false, true)
+    // broadcast to every live instance: this.orders.publish(payload, { broadcast: true })
+    // flag for a retry job if it ends up in the DLQ: this.orders.publish(payload, { retryable: true })
   }
 }
 
@@ -99,8 +100,14 @@ export class OrdersService {
 export class OrdersModule {}
 ```
 
-`publish(message, retry = false, broadcast = false)` **never throws**. It returns `{ success: boolean; error?: string }`.
-`retry` is only stored in the dead letter queue entry, so a job can decide what to resend. Nothing is retried automatically.
+`publish(message, { retryable = false, broadcast = false })` **never throws**. It returns `{ success: boolean; error?: string }`.
+
+`retryable` is only stored as `retry` in the dead letter queue entry, so a job can decide what to resend. **Nothing is retried automatically.** It only works if:
+
+1. the dead letter queue is enabled (`deadLetterQueue.enable: true`). The error queue does not carry this flag;
+2. a retry job reads the DLQ. Postino does not ship one yet: for now it has to be implemented separately.
+
+It is ignored for broadcasts, which never go to the DLQ. The positional form `publish(message, retry, broadcast)` still works but is deprecated.
 
 ### 3. Subscribe
 
