@@ -8,7 +8,8 @@ import { POSTINO_SUBSCRIBE_KEY, PostinoSubscribe } from '../src/decorators/posti
 import { POSTINO_SUBSCRIBER_HOST_KEY, PostinoSubscriberHost } from '../src/decorators/postino-subscriber-host.decorator.js';
 import { PostinoExplorer } from '../src/postino.explorer.js';
 import { PostinoModule } from '../src/postino.module.js';
-import { getAsyncConfigProviders, getChannelProvider, getConfigProviders } from '../src/postino.provider.js';
+import { PostinoPublisherFactory, PostinoSubscriberFactory, type PostinoOptionsInput } from 'redis-postino';
+import { getAsyncConfigProviders, getChannelProvider, getConfigProviders, getPublisherProvider, getSubscriberProvider } from '../src/postino.provider.js';
 import { PostinoChannel } from '../src/services/postino-channel.service.js';
 import { PostinoPublisherService } from '../src/services/postino-publisher.service.js';
 import { PostinoSubscriberService } from '../src/services/postino-subscriber.service.js';
@@ -91,6 +92,20 @@ describe('providers', () => {
   it('getAsyncConfigProviders provides the options factory', () => {
     const useFactory = () => ({});
     expect(getAsyncConfigProviders({ useFactory, inject: ['X'] })).toEqual({ provide: POSTINO_MODULE_OPTIONS, useFactory, inject: ['X'] });
+  });
+
+  it('cluster options reach the core publisher and subscriber factories unchanged', () => {
+    const options: PostinoOptionsInput = {
+      connection: { password: 'secret' },
+      cluster: { rootNodes: [{ host: 'n1', port: 7000 }, 'redis://n2:7001'], useReplicas: true },
+    };
+    const publisher = vi.spyOn(PostinoPublisherFactory, 'getInstance').mockReturnValue({} as any);
+    const subscriber = vi.spyOn(PostinoSubscriberFactory, 'getInstance').mockReturnValue({} as any);
+
+    expect(getPublisherProvider().useFactory(options)).toBeInstanceOf(PostinoPublisherService);
+    expect(getSubscriberProvider().useFactory(options)).toBeInstanceOf(PostinoSubscriberService);
+    expect(publisher).toHaveBeenCalledWith(options, expect.anything());
+    expect(subscriber).toHaveBeenCalledWith(options, expect.anything());
   });
 
   it('getChannelProvider builds a PostinoChannel bound to the channel', () => {

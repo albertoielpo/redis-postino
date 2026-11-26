@@ -1,6 +1,30 @@
 import type { RedisClientOptions } from 'redis';
-import type { PostinoRawClientOptions, PostinoConnectionOptions, PostinoOptions, PostinoOptionsInput } from '../types/options.type.js';
-import { DEFAULT_OPTIONS } from '../types/options.type.js';
+import type {
+  PostinoClusterNode,
+  PostinoClusterOptions,
+  PostinoConnectionOptions,
+  PostinoOptions,
+  PostinoOptionsInput,
+  PostinoRawClientOptions,
+  PostinoRawClusterOptions,
+} from '../types/options.type.js';
+import { DEFAULT_CLUSTER_OPTIONS, DEFAULT_OPTIONS } from '../types/options.type.js';
+
+function resolveClusterOptions(input: PostinoOptionsInput['cluster']): PostinoClusterOptions | undefined {
+  if (!input) {
+    return undefined;
+  }
+
+  if (!Array.isArray(input.rootNodes) || input.rootNodes.length === 0) {
+    throw new Error(`Invalid cluster options: at least one root node is required`);
+  }
+
+  return {
+    ...DEFAULT_CLUSTER_OPTIONS,
+    ...input,
+    rootNodes: [...input.rootNodes],
+  };
+}
 
 /** Applies the defaults to the user options. Nested objects are merged, not replaced. */
 export function resolveOptions(input: PostinoOptionsInput = {}): PostinoOptions {
@@ -16,6 +40,7 @@ export function resolveOptions(input: PostinoOptionsInput = {}): PostinoOptions 
   return {
     connection,
     clientOptions: input.clientOptions,
+    ...(input.cluster ? { cluster: resolveClusterOptions(input.cluster) } : {}),
     deadLetterQueue: {
       ...DEFAULT_OPTIONS.deadLetterQueue,
       ...input.deadLetterQueue,
@@ -67,5 +92,70 @@ export function toRedisClientOptions(options: PostinoOptions, clientName?: strin
     ...(connection.commandTimeout > 0 ? { commandOptions: { timeout: connection.commandTimeout } } : {}),
     ...clientOptions,
     socket,
+  };
+}
+
+/** `true` when the options select Redis Cluster mode. */
+export function isClusterMode(options: PostinoOptions): options is PostinoOptions & { cluster: PostinoClusterOptions } {
+  return !!options.cluster;
+}
+
+/** Human readable target, for logs. */
+export function describeTarget(options: PostinoOptions) {
+  if (isClusterMode(options)) {
+    const nodes = options.cluster.rootNodes.map((node) => (typeof node === 'string' ? node : `${node.host}:${node.port}`));
+    return `cluster [${nodes.join(', ')}]`;
+  }
+
+  return `${options.connection.host}:${options.connection.port}`;
+}
+
+function toRootNode(node: PostinoClusterNode) {
+  return typeof node === 'string' ? { url: node } : { socket: { host: node.host, port: node.port } };
+}
+
+/** Options node-redis accepts only at cluster level (not inside `defaults`). */
+const CLUSTER_LEVEL_KEYS = ['RESP', 'modules', 'functions', 'scripts', 'commandOptions'] as const;
+
+/**
+ * Maps the library options to node-redis cluster options.
+ * - `connection` / `clientOptions` become the `defaults` applied to every node (root and discovered ones);
+ *   `host`, `port`, `url` and `database` are dropped (nodes come from the topology, cluster only has db 0).
+ * - `cluster.clusterOptions` is merged last.
+ */
+export function toRedisClusterOptions(options: PostinoOptions, clientName?: string): PostinoRawClusterOptions {
+  if (!isClusterMode(options)) {
+    throw new Error(`toRedisClusterOptions requires cluster options`);
+  }
+
+  const { cluster } = options;
+  const nodeOptions: Record<string, any> = { ...toRedisClientOptions(options, clientName) };
+  const clusterLevel: Record<string, any> = {};
+  CLUSTER_LEVEL_KEYS.forEach((key) => {
+    if (nodeOptions[key] !== undefined) {
+      clusterLevel[key] = nodeOptions[key];
+    }
+    delete nodeOptions[key];
+  });
+
+  const { database, url, socket, ...defaults } = nodeOptions;
+  const { host, port, path, ...socketDefaults } = (socket ?? {}) as Record<string, unknown>;
+  const { defaults: rawDefaults, ...rawCluster } = cluster.clusterOptions ?? {};
+
+  return {
+    rootNodes: cluster.rootNodes.map(toRootNode),
+    useReplicas: cluster.useReplicas,
+    maxCommandRedirections: cluster.maxCommandRedirections,
+    ...(cluster.nodeAddressMap ? { nodeAddressMap: cluster.nodeAddressMap } : {}),
+    ...clusterLevel,
+    ...rawCluster,
+    defaults: {
+      ...defaults,
+      ...rawDefaults,
+      socket: {
+        ...socketDefaults,
+        ...rawDefaults?.socket,
+      },
+    },
   };
 }

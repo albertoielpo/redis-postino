@@ -104,3 +104,55 @@ export function createMockLogger(): PostinoLogger & Record<string, ReturnType<ty
 
 /** Lets pending promise callbacks run. */
 export const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+export interface FakeClusterNode {
+  address: string;
+  client: FakeRedisClient;
+}
+
+/**
+ * Minimal in-memory stand-in for a node-redis cluster client.
+ * Every node owns a FakeRedisClient (returned by `nodeClient`); pub/sub happens on `pubSubClient`.
+ */
+export class FakeRedisCluster extends FakeRedisClient {
+  public masters: FakeClusterNode[] = [];
+  public replicas: FakeClusterNode[] = [];
+  public pubSubNode?: { address: string; client: FakeRedisClient; connectPromise?: Promise<unknown> };
+
+  constructor(options: any = {}, masters = 3, replicas = 0) {
+    super(options);
+    this.masters = Array.from({ length: masters }, (_, i) => ({ address: `m${i}:7000`, client: new FakeRedisClient() }));
+    this.replicas = Array.from({ length: replicas }, (_, i) => ({ address: `r${i}:7000`, client: new FakeRedisClient() }));
+  }
+
+  public nodeClient = vi.fn(async (node: FakeClusterNode) => node.client);
+
+  public override subscribe = vi.fn(async (channel: string | string[], listener: Listener) => {
+    if (!this.pubSubNode) {
+      const node = this.masters[0];
+      this.pubSubNode = { address: node.address, client: new FakeRedisClient() };
+      this.pubSubNode.client.isOpen = true;
+    }
+    [channel].flat().forEach((ch) => {
+      const set = this.subscriptions.get(ch) ?? new Set<Listener>();
+      set.add(listener);
+      this.subscriptions.set(ch, set);
+    });
+  });
+
+  public override get role(): string | undefined {
+    return this.options?.defaults?.name?.split(':')[1];
+  }
+}
+
+export const createdClusters: FakeRedisCluster[] = [];
+
+export function fakeCreateCluster(options: unknown) {
+  const cluster = new FakeRedisCluster(options);
+  createdClusters.push(cluster);
+  return cluster;
+}
+
+export function resetFakeClusters() {
+  createdClusters.length = 0;
+}

@@ -1,6 +1,8 @@
 import type { PostinoLogger } from '../types/logger.type.js';
 import type { PostinoOptions, PostinoQueueOption } from '../types/options.type.js';
+import { getQueueEntryKey } from '../utils/cluster.utils.js';
 import { LazyRedisConnection } from '../utils/connection.utils.js';
+import { isClusterMode } from '../utils/options.utils.js';
 
 /**
  * Writes entries on the dead letter queue and on the error queue.
@@ -11,10 +13,12 @@ export class PostinoQueue {
 
   private readonly connection: LazyRedisConnection;
   private readonly logger: PostinoLogger;
+  private readonly cluster: boolean;
   private timeoutObj?: NodeJS.Timeout;
 
   constructor(options: PostinoOptions, logger: PostinoLogger) {
     this.logger = logger;
+    this.cluster = isClusterMode(options);
     this.connection = new LazyRedisConnection(options, 'queueManager', logger);
   }
 
@@ -30,7 +34,8 @@ export class PostinoQueue {
       const redis = await this.connection.get();
       this.resetTimeout();
 
-      const key = `${name}:${messageId}`;
+      // in cluster mode the entry key carries a hash tag: entry and list must live in the same slot
+      const key = getQueueEntryKey(name, messageId, this.cluster);
       await redis.multi().setEx(key, ttlInSeconds, JSON.stringify(message)).rPush(name, key).expire(name, ttlInSeconds).exec();
     } catch (err) {
       this.logger.error(`MessageId: ${messageId} | An error occurred while adding message ${messageId} on queue ${queueOption?.name}: ${err}`);

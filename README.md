@@ -7,7 +7,7 @@ Redis pub/sub messaging for Node.js microservices: load-balanced at-most-once de
 | [`redis-postino`](packages/core/README.md)          | `packages/core`   | Framework-agnostic core                                               |
 | [`nestjs-redis-postino`](packages/nestjs/README.md) | `packages/nestjs` | NestJS 12 module (decorators, injectable channels), built on the core |
 
-Requirements: Node.js >= 24.15, Redis >= 7.2 standalone (**Redis Cluster is not supported**). The packages are ESM only.
+Requirements: Node.js >= 24.15, Redis >= 7.2 standalone, or Redis Cluster (**experimental**). The packages are ESM only.
 
 Migrating from the previous ioredis-based library? See [MIGRATION.md](MIGRATION.md).
 

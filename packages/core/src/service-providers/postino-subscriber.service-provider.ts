@@ -2,9 +2,11 @@ import { randomUUID } from 'node:crypto';
 import { PostinoQueueFactory } from '../factories/postino-queue.factory.js';
 import type { PostinoLogger } from '../types/logger.type.js';
 import type { PostinoOptions, PostinoQueueOption } from '../types/options.type.js';
-import type { PostinoRedisClient } from '../types/redis-client.type.js';
+import type { PostinoRedisConnection } from '../types/redis-client.type.js';
 import { extractChannelName, getSubscribeChannel } from '../utils/channel.utils.js';
-import { createRedisClient, safeQuit } from '../utils/connection.utils.js';
+import { isRedisCluster, refreshClusterTopology } from '../utils/cluster.utils.js';
+import { createRedisConnection, safeQuit } from '../utils/connection.utils.js';
+import { describeTarget, isClusterMode } from '../utils/options.utils.js';
 import type { PostinoQueue } from './postino-queue.service-provider.js';
 
 export type PostinoMessageHandler<T> = (message: T) => void | Promise<void>;
@@ -21,7 +23,7 @@ export class PostinoSubscriber<T = object> {
   public static readonly HEALING_DELAY_MS = 5000;
   public static readonly HEALING_MAX_DELAY_MS = 60000;
 
-  private redis: PostinoRedisClient;
+  private redis: PostinoRedisConnection;
   /** Resolves to `true` once connected, `false` if the connection attempt failed (healing is then scheduled). Never rejects. */
   private ready: Promise<boolean>;
 
@@ -35,6 +37,11 @@ export class PostinoSubscriber<T = object> {
   private shuttingDown = false;
   private healingTimer?: NodeJS.Timeout;
   private healingAttempts = 0;
+  /** `true` while a healing run is in progress (cluster watchdog must not start another one). */
+  private healing = false;
+  /** `true` once the current connection attempt succeeded. */
+  private connected = false;
+  private watchdogTimer?: NodeJS.Timeout;
 
   constructor(options: PostinoOptions, logger: PostinoLogger) {
     this.logger = logger;
@@ -44,6 +51,7 @@ export class PostinoSubscriber<T = object> {
     const { client, ready } = this.initConnection();
     this.redis = client;
     this.ready = ready;
+    this.startClusterWatchdog();
   }
 
   /**
@@ -62,7 +70,7 @@ export class PostinoSubscriber<T = object> {
         return false;
       }
 
-      await this.redis.subscribe(subscribeChannel, this.onMessage);
+      await this.redisSubscribe(subscribeChannel);
       this.logger.log(`Subscribed to channel ${channel}`);
       return true;
     } catch (err) {
@@ -78,6 +86,7 @@ export class PostinoSubscriber<T = object> {
   public async onApplicationShutdown() {
     this.shuttingDown = true;
     clearTimeout(this.healingTimer);
+    clearInterval(this.watchdogTimer);
 
     try {
       this.logger.log(`Application shutdown. Unsubscribe and close subscriber Redis connection...`);
@@ -127,13 +136,27 @@ export class PostinoSubscriber<T = object> {
     }
   };
 
-  private initConnection(): { client: PostinoRedisClient; ready: Promise<boolean> } {
-    const { host, port } = this.options.connection;
-    this.logger.log(`Connecting subscriber instance to Redis on ${host}:${port}...`);
-    const client = createRedisClient(this.options, 'subscriber', this.logger, this.INSTANCE_ID);
+  /**
+   * node-redis exposes the same `subscribe` on both the standalone and the cluster client,
+   * but TypeScript cannot call it through the union.
+   */
+  private async redisSubscribe(subscribeChannels: string | string[]) {
+    if (isRedisCluster(this.redis)) {
+      return this.redis.subscribe(subscribeChannels, this.onMessage);
+    }
 
-    // Transient disconnections are handled by node-redis, which also re-subscribes the registered listeners.
-    // 'terminated' means the reconnect strategy is exhausted: the client is dead and must be replaced.
+    return this.redis.subscribe(subscribeChannels, this.onMessage);
+  }
+
+  private initConnection(): { client: PostinoRedisConnection; ready: Promise<boolean> } {
+    this.logger.log(`Connecting subscriber instance to Redis on ${describeTarget(this.options)}...`);
+    const client = createRedisConnection(this.options, 'subscriber', this.logger, this.INSTANCE_ID);
+    this.connected = false;
+
+    // Transient disconnections are handled by node-redis, which also re-subscribes the registered listeners
+    // (in cluster mode it also moves the subscriptions when the pub/sub node leaves the topology).
+    // 'terminated' (standalone only) means the reconnect strategy is exhausted: the client is dead and must be replaced.
+    // The cluster client never emits it: the cluster watchdog covers that case.
     client.on('terminated', () => {
       if (this.shuttingDown) {
         return;
@@ -147,6 +170,7 @@ export class PostinoSubscriber<T = object> {
       .connect()
       .then(() => {
         this.healingAttempts = 0;
+        this.connected = true;
         return true;
       })
       .catch((err) => {
@@ -181,26 +205,92 @@ export class PostinoSubscriber<T = object> {
       return;
     }
 
-    this.redis.destroy();
-    const { client, ready } = this.initConnection();
-    this.redis = client;
-    this.ready = ready;
+    this.healing = true;
+    try {
+      this.redis.destroy();
+      const { client, ready } = this.initConnection();
+      this.redis = client;
+      this.ready = ready;
 
-    if (!(await ready) || this.shuttingDown) {
-      return;
+      if (!(await ready) || this.shuttingDown) {
+        return;
+      }
+    } finally {
+      this.healing = false;
     }
 
     this.logger.log(`Redis subscriber healed. Subscribing ${this.subscriberExecution.size} saved executions...`);
+    this.resubscribeAll();
+  }
+
+  private resubscribeAll() {
     for (const channel of this.subscriberExecution.keys()) {
       const subscribeChannel = getSubscribeChannel(channel, this.INSTANCE_ID, this.logger);
-      this.redis
-        .subscribe(subscribeChannel, this.onMessage)
+      this.redisSubscribe(subscribeChannel)
         .then(() => {
           this.logger.log(`Subscribed to channel ${channel}`);
         })
         .catch((err) => {
           this.logger.error(`An error occurred while subscribing on channel ${channel}:${this.INSTANCE_ID}: ${err}`);
         });
+    }
+  }
+
+  private startClusterWatchdog() {
+    const interval = this.options.cluster?.healthCheckIntervalMs ?? 0;
+    if (!isClusterMode(this.options) || interval <= 0) {
+      return;
+    }
+
+    this.watchdogTimer = setInterval(() => this.checkClusterHealth(), interval);
+    // never keep the process alive because of the watchdog
+    this.watchdogTimer.unref();
+  }
+
+  /**
+   * Cluster mode only. node-redis does not emit `terminated` for a cluster: when the reconnect strategy of the
+   * pub/sub node connection is exhausted the subscriptions are silently lost. Detects it and heals:
+   * - cluster client closed, or pub/sub connection dead: recreate the cluster client and re-subscribe;
+   * - pub/sub connection missing (e.g. its connection attempt failed): re-subscribe, node-redis opens a new one.
+   */
+  private checkClusterHealth() {
+    if (this.shuttingDown || this.healing || this.healingTimer || !this.connected || !this.subscriberExecution.size) {
+      return;
+    }
+
+    const cluster = this.redis;
+    if (!isRedisCluster(cluster)) {
+      return;
+    }
+
+    if (!cluster.isOpen) {
+      this.logger.error(`Redis cluster subscriber is closed. Scheduling self-healing...`);
+      this.scheduleHealing();
+      return;
+    }
+
+    const { pubSubNode } = cluster;
+    if (!pubSubNode) {
+      this.logger.warn(
+        `Redis cluster subscriber has no pub/sub connection. Refreshing the topology and re-subscribing ${this.subscriberExecution.size} channels...`,
+      );
+      // the pub/sub node is picked from the topology: refresh it first, or a dead node may be picked again
+      this.healing = true;
+      refreshClusterTopology(cluster, this.logger)
+        .then(() => {
+          if (!this.shuttingDown && this.redis === cluster) {
+            this.resubscribeAll();
+          }
+        })
+        .finally(() => {
+          this.healing = false;
+        });
+      return;
+    }
+
+    if (!pubSubNode.connectPromise && !pubSubNode.client.isOpen) {
+      this.logger.error(`Redis cluster pub/sub connection to ${pubSubNode.address} is permanently closed. Scheduling self-healing...`);
+      this.scheduleHealing();
     }
   }
 }

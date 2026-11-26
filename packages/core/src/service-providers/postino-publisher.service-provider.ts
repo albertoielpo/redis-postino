@@ -4,8 +4,10 @@ import { PostinoQueueFactory } from '../factories/postino-queue.factory.js';
 import type { PostinoLogger } from '../types/logger.type.js';
 import type { PostinoOptions, PostinoQueueOption } from '../types/options.type.js';
 import type { PostinoMessage, PostinoPublishDto, PostinoPublishResult } from '../types/publisher.type.js';
-import type { PostinoRedisClient } from '../types/redis-client.type.js';
-import { createRedisClient, LazyRedisConnection, safeQuit } from '../utils/connection.utils.js';
+import type { PostinoRedisConnection } from '../types/redis-client.type.js';
+import { discoverSubscriberChannels, type PostinoSubscriberChannel } from '../utils/cluster.utils.js';
+import { createRedisConnection, LazyRedisConnection, safeQuit } from '../utils/connection.utils.js';
+import { describeTarget } from '../utils/options.utils.js';
 import type { PostinoQueue } from './postino-queue.service-provider.js';
 
 export class PostinoPublisher {
@@ -19,9 +21,7 @@ export class PostinoPublisher {
   constructor(options: PostinoOptions, logger: PostinoLogger) {
     this.logger = logger;
     this.options = options;
-    this.logger.log(
-      `Connecting publisher instance to Redis on ${options.connection.host}:${options.connection.port} and dispatchAndClose=${options.dispatchAndClose}...`,
-    );
+    this.logger.log(`Connecting publisher instance to Redis on ${describeTarget(options)} and dispatchAndClose=${options.dispatchAndClose}...`);
     this.deadLetterQueueOptions = options.deadLetterQueue;
     this.dispatchAndClose = options.dispatchAndClose;
     this.queueService = PostinoQueueFactory.getInstance(options, this.logger);
@@ -44,6 +44,8 @@ export class PostinoPublisher {
    * - broadcast: the message is delivered to every live subscriber instance.
    *
    * Never throws. When a unicast message cannot be delivered it is added to the dead letter queue.
+   * In cluster mode the subscribers are discovered on every node and each message is published through
+   * the node its subscriber is connected to (see `discoverSubscriberChannels`).
    * @param retry stored in the dead letter queue entry, to flag it for a later retry
    */
   public async publish<T>(dto: PostinoPublishDto<T>, retry = false, broadcast = false): Promise<PostinoPublishResult> {
@@ -55,16 +57,16 @@ export class PostinoPublisher {
     };
     const serialized = JSON.stringify(messageToPublish);
 
-    let redisInstance: PostinoRedisClient | undefined;
+    let redisInstance: PostinoRedisConnection | undefined;
     try {
       redisInstance = await this.getRedisInstance();
-      const subscribers = (await redisInstance.pubSubChannels(`${channel}:*`)).map(String);
+      const subscribers = await discoverSubscriberChannels(redisInstance, `${channel}:*`, this.logger);
 
       if (broadcast) {
-        return await this.broadcast(redisInstance, messageId, channel, subscribers, serialized);
+        return await this.broadcast(messageId, channel, subscribers, serialized);
       }
 
-      return await this.unicast(redisInstance, messageId, dto, subscribers, serialized, retry);
+      return await this.unicast(messageId, dto, subscribers, serialized, retry);
     } catch (err) {
       this.logger.error(`MessageId: ${messageId} | Publish on channel ${channel} failed: ${err}`);
       if (!broadcast) {
@@ -80,10 +82,10 @@ export class PostinoPublisher {
     }
   }
 
-  private async broadcast(redisInstance: PostinoRedisClient, messageId: string, channel: string, subscribers: string[], serialized: string) {
+  private async broadcast(messageId: string, channel: string, subscribers: PostinoSubscriberChannel[], serialized: string) {
     this.logger.debug(`Broadcast requested. Publishing message on ${channel}:* with ${subscribers.length} subscribers`);
     // PUBLISH does not support patterns: publish on every instance channel
-    const settled = await Promise.allSettled(subscribers.map((subscribedChannel) => redisInstance.publish(subscribedChannel, serialized)));
+    const settled = await Promise.allSettled(subscribers.map(({ channel: subscribedChannel, target }) => target.publish(subscribedChannel, serialized)));
     const results = settled.map((result) => (result.status === 'fulfilled' ? Number(result.value) : 0));
 
     if (results.every((status) => status === 0)) {
@@ -105,10 +107,9 @@ export class PostinoPublisher {
   }
 
   private async unicast<T>(
-    redisInstance: PostinoRedisClient,
     messageId: string,
     dto: PostinoPublishDto<T>,
-    subscribers: string[],
+    subscribers: PostinoSubscriberChannel[],
     serialized: string,
     retry: boolean,
   ): Promise<PostinoPublishResult> {
@@ -126,10 +127,10 @@ export class PostinoPublisher {
     const candidates = [...subscribers];
     while (candidates.length > 0) {
       const randomIndex = Math.floor(Math.random() * candidates.length);
-      const randomSubscriber = candidates.splice(randomIndex, 1)[0];
+      const { channel: randomSubscriber, target } = candidates.splice(randomIndex, 1)[0];
 
       try {
-        const status = Number(await redisInstance.publish(randomSubscriber, serialized));
+        const status = Number(await target.publish(randomSubscriber, serialized));
         if (status === 0) {
           throw new Error(`MessageId: ${messageId} | Message delivery on ${channel} failed with status ${status}.`);
         }
@@ -162,9 +163,9 @@ export class PostinoPublisher {
    * dispatchAndClose: a dedicated connection per publish, so concurrent publishes never close each other's connection.
    * Otherwise: the shared connection, reconnected only when it is no longer usable.
    */
-  private async getRedisInstance(): Promise<PostinoRedisClient> {
+  private async getRedisInstance(): Promise<PostinoRedisConnection> {
     if (!this.connection) {
-      const client = createRedisClient(this.options, 'publisher', this.logger);
+      const client = createRedisConnection(this.options, 'publisher', this.logger);
       try {
         await client.connect();
       } catch (err) {
@@ -177,7 +178,7 @@ export class PostinoPublisher {
     return this.connection.get();
   }
 
-  private async disconnectIfNeeded(instance?: PostinoRedisClient) {
+  private async disconnectIfNeeded(instance?: PostinoRedisConnection) {
     if (!this.dispatchAndClose) {
       return;
     }

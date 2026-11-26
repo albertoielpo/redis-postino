@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- **Experimental** Redis Cluster support (`cluster` option) in `redis-postino` and `nestjs-redis-postino`:
+  - connections use a node-redis cluster client; `connection` / `clientOptions` are applied to every node.
+  - the publisher discovers subscribers on every node of the topology and publishes through the node each subscriber is connected to (`PUBLISH` replies only count local receivers in a cluster).
+  - the cluster topology is refreshed when some nodes cannot be queried, so subscribers on a newly promoted master are found after a failover.
+  - queue entries are hash-tagged (`{<queue>}:<id>`) so the `MULTI` writing entry and list does not fail with `CROSSSLOT`.
+  - subscriber watchdog (`cluster.healthCheckIntervalMs`) that heals a dead pub/sub connection, since node-redis does not emit `terminated` for clusters.
+
 ## Unreleased: first release
 
 Port of the previous internal ioredis-based library to node-redis, under the new names `redis-postino` and `nestjs-redis-postino`.

@@ -7,12 +7,13 @@ NestJS module for [`redis-postino`](https://www.npmjs.com/package/redis-postino)
 - **Dead letter queue** and **error queue** stored in Redis.
 - **Typed channels** through generics, injected with a decorator.
 - **Self-healing** subscriber connection.
+- **Redis Cluster** support through the `cluster` option (experimental).
 
 ## Requirements
 
 - Node.js **>= 24.15**
 - NestJS **12**
-- Redis **>= 7.2**, standalone. **Redis Cluster is not supported.**
+- Redis **>= 7.2**, standalone. Redis Cluster support is **experimental** (see [Redis Cluster](https://www.npmjs.com/package/redis-postino#redis-cluster)).
 - ESM only. Node.js 24 can also `require()` it from CommonJS.
 
 ## Installation
@@ -50,6 +51,20 @@ export class AppModule {}
 ```
 
 `PostinoModule.forRoot(options)` accepts the same options synchronously.
+
+To connect to a **Redis Cluster** (**experimental**: not yet validated against a real cluster, see the [`redis-postino` notes](https://www.npmjs.com/package/redis-postino#redis-cluster)), pass `cluster` (the rest of the module is unchanged):
+
+```ts
+useFactory: (config: ConfigService) => ({
+  connection: { password: config.get<string>('REDIS_PASSWORD') }, // applied to every node
+  cluster: {
+    rootNodes: config
+      .getOrThrow<string>('REDIS_CLUSTER_NODES') // "redis-0:6379,redis-1:6379,redis-2:6379"
+      .split(',')
+      .map((node) => `redis://${node}`),
+  },
+}),
+```
 
 ### 2. Publish
 
@@ -107,21 +122,27 @@ export class OrdersSubscriber {
 
 ## Options
 
-| Option                                    | Default                                                       | Description                                                                                 |
-| ----------------------------------------- | ------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| `connection.host` / `port`                | `localhost` / `6379`                                          | Redis server                                                                                |
-| `connection.username` / `password` / `db` | –                                                             | ACL credentials and database                                                                |
-| `connection.tls`                          | –                                                             | `true` or Node.js TLS options                                                               |
-| `connection.connectTimeout`               | `5000`                                                        | ms                                                                                          |
-| `connection.keepAlive`                    | `5000`                                                        | TCP keep-alive initial delay in ms, `0` disables it                                         |
-| `connection.commandTimeout`               | `3000`                                                        | ms a command may wait to be sent (e.g. while reconnecting), `0` disables it                 |
-| `connection.reconnect`                    | `{ maxAttempts: 10, delayMs: 1000 }`                          | linear backoff; after the last attempt the subscriber self-heals (5 s, doubling up to 60 s) |
-| `clientOptions`                           | –                                                             | raw node-redis client options, merged last                                                  |
-| `dispatchAndClose`                        | `false`                                                       | open a dedicated connection per publish and close it afterwards                             |
-| `deadLetterQueue`                         | `{ enable: true, name: 'postino-dlq', ttlInSeconds: 604800 }` | undelivered unicast messages                                                                |
-| `errorQueue`                              | `{ enable: true, name: 'postino-eq', ttlInSeconds: 604800 }`  | messages whose handler threw                                                                |
+| Option                                    | Default                                                       | Description                                                                                                    |
+| ----------------------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `connection.host` / `port`                | `localhost` / `6379`                                          | Redis server                                                                                                   |
+| `connection.username` / `password` / `db` | –                                                             | ACL credentials and database                                                                                   |
+| `connection.tls`                          | –                                                             | `true` or Node.js TLS options                                                                                  |
+| `connection.connectTimeout`               | `5000`                                                        | ms                                                                                                             |
+| `connection.keepAlive`                    | `5000`                                                        | TCP keep-alive initial delay in ms, `0` disables it                                                            |
+| `connection.commandTimeout`               | `3000`                                                        | ms a command may wait to be sent (e.g. while reconnecting), `0` disables it                                    |
+| `connection.reconnect`                    | `{ maxAttempts: 10, delayMs: 1000 }`                          | linear backoff; after the last attempt the subscriber self-heals (5 s, doubling up to 60 s)                    |
+| `clientOptions`                           | –                                                             | raw node-redis client options, merged last                                                                     |
+| `cluster.rootNodes`                       | –                                                             | enables Redis Cluster mode (experimental); seed nodes as `{ host, port }` or URLs (`host`/`port`/`db` ignored) |
+| `cluster.useReplicas`                     | `false`                                                       | distribute read-only commands across replicas                                                                  |
+| `cluster.maxCommandRedirections`          | `16`                                                          | `MOVED` / `ASK` redirections followed per command                                                              |
+| `cluster.nodeAddressMap`                  | –                                                             | announced node address → reachable address (NAT, Docker, Kubernetes)                                           |
+| `cluster.healthCheckIntervalMs`           | `10000`                                                       | subscriber watchdog for the pub/sub connection, `0` disables it                                                |
+| `cluster.clusterOptions`                  | –                                                             | raw node-redis cluster options, merged last                                                                    |
+| `dispatchAndClose`                        | `false`                                                       | open a dedicated connection per publish and close it afterwards                                                |
+| `deadLetterQueue`                         | `{ enable: true, name: 'postino-dlq', ttlInSeconds: 604800 }` | undelivered unicast messages                                                                                   |
+| `errorQueue`                              | `{ enable: true, name: 'postino-eq', ttlInSeconds: 604800 }`  | messages whose handler threw                                                                                   |
 
-The queue formats and a reader example are in the [`redis-postino` README](https://www.npmjs.com/package/redis-postino#queues).
+The queue formats and a reader example are in the [`redis-postino` README](https://www.npmjs.com/package/redis-postino#queues), the cluster details (including the [things to know](https://www.npmjs.com/package/redis-postino#things-to-know) before enabling it) in its [Redis Cluster](https://www.npmjs.com/package/redis-postino#redis-cluster) section.
 
 ## License
 
