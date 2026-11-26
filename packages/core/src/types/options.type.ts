@@ -102,14 +102,25 @@ export interface PostinoOptions {
   errorQueue: PostinoQueueOption;
 }
 
-/** Options accepted by the factories and by the NestJS module. Every field is optional. */
+/** Queue options accepted as input: `enable` is required, `name` and `ttlInSeconds` have defaults. */
+export type PostinoQueueOptionInput = Partial<Omit<PostinoQueueOption, 'enable'>> & Pick<PostinoQueueOption, 'enable'>;
+
+/** Defaults applied when the user omits an option. The queues' `enable` flag has no default. */
+export type PostinoDefaultOptions = Omit<PostinoOptions, 'deadLetterQueue' | 'errorQueue'> & {
+  deadLetterQueue: Omit<PostinoQueueOption, 'enable'>;
+  errorQueue: Omit<PostinoQueueOption, 'enable'>;
+};
+
+/** Options accepted by the factories and by the NestJS module. Only `deadLetterQueue.enable` and `errorQueue.enable` are required. */
 export interface PostinoOptionsInput {
   connection?: PostinoConnectionOptionsInput;
   clientOptions?: PostinoRawClientOptions;
   cluster?: PostinoClusterOptionsInput;
   dispatchAndClose?: boolean;
-  deadLetterQueue?: Partial<PostinoQueueOption>;
-  errorQueue?: Partial<PostinoQueueOption>;
+  /** Required: `enable` has no default and must be set explicitly. */
+  deadLetterQueue: PostinoQueueOptionInput;
+  /** Required: `enable` has no default and must be set explicitly. */
+  errorQueue: PostinoQueueOptionInput;
 }
 
 export const DEFAULT_CLUSTER_OPTIONS: Omit<PostinoClusterOptions, 'rootNodes'> = {
@@ -118,7 +129,7 @@ export const DEFAULT_CLUSTER_OPTIONS: Omit<PostinoClusterOptions, 'rootNodes'> =
   healthCheckIntervalMs: 10000,
 };
 
-export const DEFAULT_OPTIONS: PostinoOptions = {
+export const DEFAULT_OPTIONS: PostinoDefaultOptions = {
   connection: {
     host: 'localhost',
     port: 6379,
@@ -132,12 +143,10 @@ export const DEFAULT_OPTIONS: PostinoOptions = {
   },
   dispatchAndClose: false,
   deadLetterQueue: {
-    enable: true,
     name: 'postino-dlq',
     ttlInSeconds: 604800, // one week
   },
   errorQueue: {
-    enable: true,
     name: 'postino-eq',
     ttlInSeconds: 604800, // one week
   },

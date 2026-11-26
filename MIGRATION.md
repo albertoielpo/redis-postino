@@ -49,9 +49,9 @@ Requirements: Node.js >= 24.15, NestJS 12, Redis >= 7.2, ESM.
     dispatchAndClose: false,
 -   deadLetterQueue: { name: 'redis-comm-dlq' },
 -   errorQueue: { name: 'redis-comm-eq' },
-+   // keep the old queue names during the migration, so existing DLQ/EQ jobs keep working
-+   deadLetterQueue: { name: 'redis-comm-dlq' },
-+   errorQueue: { name: 'redis-comm-eq' },
++   // `enable` is required; keep the old names during the migration, so existing DLQ/EQ jobs keep working
++   deadLetterQueue: { enable: true, name: 'redis-comm-dlq' },
++   errorQueue: { enable: true, name: 'redis-comm-eq' },
   }
 ```
 
@@ -66,6 +66,7 @@ Requirements: Node.js >= 24.15, NestJS 12, Redis >= 7.2, ESM.
 | `autoResubscribe`                               | removed: node-redis always re-subscribes after a reconnection                |
 | anything else                                   | `clientOptions` (raw node-redis options, merged last)                        |
 
+- **`deadLetterQueue.enable` and `errorQueue.enable` are required** (no default): the factories and the module throw if either is missing. Set `enable: true` to keep the previous behavior.
 - **Default queue names changed** to `postino-dlq` / `postino-eq`. Set the old names explicitly (as above) until the jobs that read the queues are migrated.
 - **`commandTimeout`** now applies only to commands that are not yet sent. A sent command is not cancelled, so a `PUBLISH` that Redis already ran is never retried on another instance.
 

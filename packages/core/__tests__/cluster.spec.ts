@@ -17,10 +17,12 @@ import {
   resetFakeClients,
   resetFakeClusters,
 } from './helpers/fake-redis.js';
+import { QUEUES, withQueues } from './helpers/options.js';
 
 vi.mock('redis', () => ({ createClient: vi.fn(), createCluster: vi.fn() }));
 
 const CLUSTER: PostinoOptionsInput = {
+  ...QUEUES,
   cluster: { rootNodes: [{ host: 'n1', port: 7000 }, 'redis://n2:7001'] },
 };
 
@@ -28,7 +30,7 @@ const clustersOf = (role: 'subscriber' | 'publisher' | 'queueManager') => create
 
 describe('cluster options', () => {
   it('is not cluster mode by default', () => {
-    const options = resolveOptions();
+    const options = resolveOptions(QUEUES);
 
     expect(isClusterMode(options)).toBe(false);
     expect(options.cluster).toBeUndefined();
@@ -44,7 +46,7 @@ describe('cluster options', () => {
   });
 
   it('rejects a cluster without root nodes', () => {
-    expect(() => resolveOptions({ cluster: { rootNodes: [] } })).toThrow(/root node/);
+    expect(() => resolveOptions(withQueues({ cluster: { rootNodes: [] } }))).toThrow(/root node/);
   });
 
   it('maps connection options to the per-node defaults', () => {
@@ -83,6 +85,7 @@ describe('cluster options', () => {
     const nodeAddressMap = { '10.0.0.1:7000': { host: 'localhost', port: 7000 } };
     const options = toRedisClusterOptions(
       resolveOptions({
+        ...QUEUES,
         cluster: {
           ...CLUSTER.cluster!,
           useReplicas: true,
@@ -102,7 +105,7 @@ describe('cluster options', () => {
   });
 
   it('throws when building cluster options without cluster mode', () => {
-    expect(() => toRedisClusterOptions(resolveOptions())).toThrow();
+    expect(() => toRedisClusterOptions(resolveOptions(QUEUES))).toThrow();
   });
 });
 
@@ -127,7 +130,7 @@ describe('cluster utils', () => {
     const logger = createMockLogger();
 
     expect(isRedisCluster(createRedisConnection(resolveOptions(CLUSTER), 'publisher', logger) as any)).toBe(true);
-    expect(isRedisCluster(createRedisConnection(resolveOptions(), 'publisher', logger) as any)).toBe(false);
+    expect(isRedisCluster(createRedisConnection(resolveOptions(QUEUES), 'publisher', logger) as any)).toBe(false);
   });
 
   it('logs node level cluster events', () => {
@@ -263,7 +266,7 @@ describe('cluster mode', () => {
       vi.spyOn(PostinoQueueFactory, 'getInstance').mockReturnValue(queue as any);
     });
 
-    const createPublisher = async (input: PostinoOptionsInput = {}) => {
+    const createPublisher = async (input: Partial<PostinoOptionsInput> = {}) => {
       const publisher = new PostinoPublisher(resolveOptions({ ...CLUSTER, ...input }), logger);
       await flush();
       return { publisher, cluster: clustersOf('publisher')[0] };
@@ -335,7 +338,7 @@ describe('cluster mode', () => {
     });
 
     const createSubscriber = () => {
-      subscriber = new PostinoSubscriber(resolveOptions({ cluster: { ...CLUSTER.cluster!, healthCheckIntervalMs: interval } }), logger);
+      subscriber = new PostinoSubscriber(resolveOptions({ ...QUEUES, cluster: { ...CLUSTER.cluster!, healthCheckIntervalMs: interval } }), logger);
       return subscriber;
     };
     const current = () => clustersOf('subscriber').at(-1)!;
@@ -391,7 +394,7 @@ describe('cluster mode', () => {
 
     it('watchdog: is disabled with healthCheckIntervalMs = 0 and stopped on shutdown', async () => {
       vi.useFakeTimers();
-      subscriber = new PostinoSubscriber(resolveOptions({ cluster: { ...CLUSTER.cluster!, healthCheckIntervalMs: 0 } }), logger);
+      subscriber = new PostinoSubscriber(resolveOptions({ ...QUEUES, cluster: { ...CLUSTER.cluster!, healthCheckIntervalMs: 0 } }), logger);
       await subscriber.subscribe('orders', vi.fn());
       expect(vi.getTimerCount()).toBe(0);
       await subscriber.onApplicationShutdown();

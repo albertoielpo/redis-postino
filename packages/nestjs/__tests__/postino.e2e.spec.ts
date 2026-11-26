@@ -71,7 +71,7 @@ describe('PostinoModule (e2e, fake Redis)', () => {
     const moduleRef = await Test.createTestingModule({
       imports: [
         PostinoModule.forRootAsync({
-          useFactory: async () => ({ connection: { host: 'redis.test' } }),
+          useFactory: async () => ({ connection: { host: 'redis.test' }, deadLetterQueue: { enable: true }, errorQueue: { enable: true } }),
         }),
         OrdersModule,
       ],
@@ -91,7 +91,7 @@ describe('PostinoModule (e2e, fake Redis)', () => {
 
   it('returns a failure when nobody is subscribed', async () => {
     const moduleRef = await Test.createTestingModule({
-      imports: [PostinoModule.forRoot({ errorQueue: { enable: false } }), PostinoModule.registerChannel('orders')],
+      imports: [PostinoModule.forRoot({ deadLetterQueue: { enable: true }, errorQueue: { enable: false } }), PostinoModule.registerChannel('orders')],
       providers: [OrderPublisher],
     }).compile();
     const app = await moduleRef.init();

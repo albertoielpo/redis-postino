@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PostinoPublisher, resolveOptions, type PostinoOptionsInput } from '../src/index.js';
 import { PostinoQueueFactory } from '../src/factories/postino-queue.factory.js';
 import { clientsOf, createMockLogger, fakeCreateClient, FakeRedisClient, flush, resetFakeClients } from './helpers/fake-redis.js';
+import { QUEUES, withQueues } from './helpers/options.js';
 
 vi.mock('redis', () => ({ createClient: vi.fn() }));
 
@@ -10,8 +11,8 @@ describe('PostinoPublisher', () => {
   let logger: ReturnType<typeof createMockLogger>;
   let queue: { addToQueue: ReturnType<typeof vi.fn>; onApplicationShutdown: ReturnType<typeof vi.fn> };
 
-  const createPublisher = async (input: PostinoOptionsInput = {}) => {
-    const publisher = new PostinoPublisher(resolveOptions(input), logger);
+  const createPublisher = async (input: Partial<PostinoOptionsInput> = {}) => {
+    const publisher = new PostinoPublisher(resolveOptions(withQueues(input)), logger);
     await flush();
     return publisher;
   };
@@ -84,7 +85,7 @@ describe('PostinoPublisher', () => {
 
       expect(result.success).toBe(false);
       expect(result.error).toMatch(/delivery failed on every subscriber/);
-      expect(queue.addToQueue).toHaveBeenCalledWith(resolveOptions().deadLetterQueue, expect.any(String), {
+      expect(queue.addToQueue).toHaveBeenCalledWith(resolveOptions(QUEUES).deadLetterQueue, expect.any(String), {
         channel: 'orders',
         message: { n: 1 },
         retry: true,

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolveOptions } from '../src/index.js';
 import { PostinoQueue } from '../src/service-providers/postino-queue.service-provider.js';
 import { createdClients, createMockLogger, fakeCreateClient, resetFakeClients } from './helpers/fake-redis.js';
+import { QUEUES, withQueues } from './helpers/options.js';
 
 vi.mock('redis', () => ({ createClient: vi.fn() }));
 
@@ -16,7 +17,7 @@ describe('PostinoQueue', () => {
     resetFakeClients();
     vi.mocked(createClient).mockImplementation(fakeCreateClient as any);
     logger = createMockLogger();
-    queue = new PostinoQueue(resolveOptions(), logger);
+    queue = new PostinoQueue(resolveOptions(QUEUES), logger);
   });
 
   afterEach(async () => {

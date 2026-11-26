@@ -42,6 +42,8 @@ import { PostinoPublisherFactory } from 'redis-postino';
 const publisher = PostinoPublisherFactory.getInstance(
   {
     connection: { host: 'localhost', port: 6379 },
+    deadLetterQueue: { enable: true }, // required, no default
+    errorQueue: { enable: true }, // required, no default
   },
   console, // any logger with error/warn/debug and log or info
 );
@@ -62,7 +64,10 @@ await publisher.publish({ channel: 'cache-invalidation', payload: { key: 'user:1
 ```ts
 import { PostinoSubscriberFactory } from 'redis-postino';
 
-const subscriber = PostinoSubscriberFactory.getInstance({ connection: { host: 'localhost' } }, console);
+const subscriber = PostinoSubscriberFactory.getInstance(
+  { connection: { host: 'localhost' }, deadLetterQueue: { enable: true }, errorQueue: { enable: true } },
+  console,
+);
 
 await subscriber.subscribe('orders', async (order: { id: number }) => {
   // handle the message
@@ -112,10 +117,12 @@ interface PostinoOptionsInput {
     clusterOptions?: Partial<RedisClusterOptions>; // raw node-redis cluster options, merged last
   };
   dispatchAndClose?: boolean; // default false: open a dedicated connection per publish and close it afterwards
-  deadLetterQueue?: { enable?: boolean; name?: string; ttlInSeconds?: number }; // default enabled, 'postino-dlq', one week
-  errorQueue?: { enable?: boolean; name?: string; ttlInSeconds?: number }; // default enabled, 'postino-eq', one week
+  deadLetterQueue: { enable: boolean; name?: string; ttlInSeconds?: number }; // enable required; default 'postino-dlq', one week
+  errorQueue: { enable: boolean; name?: string; ttlInSeconds?: number }; // enable required; default 'postino-eq', one week
 }
 ```
+
+`deadLetterQueue.enable` and `errorQueue.enable` have no default: `getInstance()` throws if either is missing.
 
 `commandTimeout` only applies to commands that have not been sent yet. A command already sent to Redis is not cancelled, because cancelling a `PUBLISH` that Redis already ran could deliver the message twice.
 
@@ -134,6 +141,8 @@ const publisher = PostinoPublisherFactory.getInstance(
     cluster: {
       rootNodes: [{ host: 'redis-0', port: 6379 }, { host: 'redis-1', port: 6379 }, 'rediss://redis-2:6379'],
     },
+    deadLetterQueue: { enable: true },
+    errorQueue: { enable: true },
   },
   console,
 );

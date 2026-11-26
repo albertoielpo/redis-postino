@@ -5,6 +5,7 @@ import type {
   PostinoConnectionOptions,
   PostinoOptions,
   PostinoOptionsInput,
+  PostinoQueueOption,
   PostinoRawClientOptions,
   PostinoRawClusterOptions,
 } from '../types/options.type.js';
@@ -26,8 +27,26 @@ function resolveClusterOptions(input: PostinoOptionsInput['cluster']): PostinoCl
   };
 }
 
-/** Applies the defaults to the user options. Nested objects are merged, not replaced. */
-export function resolveOptions(input: PostinoOptionsInput = {}): PostinoOptions {
+function resolveQueueOption(key: 'deadLetterQueue' | 'errorQueue', input: PostinoOptionsInput[typeof key] | undefined): PostinoQueueOption {
+  if (typeof input?.enable !== 'boolean') {
+    throw new Error(`Invalid ${key} options: 'enable' is required and must be a boolean`);
+  }
+
+  return {
+    ...DEFAULT_OPTIONS[key],
+    ...input,
+  };
+}
+
+/**
+ * Applies the defaults to the user options. Nested objects are merged, not replaced.
+ * Throws if `deadLetterQueue.enable` or `errorQueue.enable` is not set.
+ */
+export function resolveOptions(input: PostinoOptionsInput): PostinoOptions {
+  // validated first, so a missing input gets the explicit error instead of a TypeError
+  const deadLetterQueue = resolveQueueOption('deadLetterQueue', input?.deadLetterQueue);
+  const errorQueue = resolveQueueOption('errorQueue', input?.errorQueue);
+
   const connection: PostinoConnectionOptions = {
     ...DEFAULT_OPTIONS.connection,
     ...input.connection,
@@ -41,14 +60,8 @@ export function resolveOptions(input: PostinoOptionsInput = {}): PostinoOptions 
     connection,
     clientOptions: input.clientOptions,
     ...(input.cluster ? { cluster: resolveClusterOptions(input.cluster) } : {}),
-    deadLetterQueue: {
-      ...DEFAULT_OPTIONS.deadLetterQueue,
-      ...input.deadLetterQueue,
-    },
-    errorQueue: {
-      ...DEFAULT_OPTIONS.errorQueue,
-      ...input.errorQueue,
-    },
+    deadLetterQueue,
+    errorQueue,
     dispatchAndClose: typeof input.dispatchAndClose === 'boolean' ? input.dispatchAndClose : DEFAULT_OPTIONS.dispatchAndClose,
   };
 }

@@ -86,17 +86,20 @@ describe('services', () => {
 
 describe('providers', () => {
   it('getConfigProviders provides the options value', () => {
-    expect(getConfigProviders({ dispatchAndClose: true })).toEqual({ provide: POSTINO_MODULE_OPTIONS, useValue: { dispatchAndClose: true } });
+    const options: PostinoOptionsInput = { dispatchAndClose: true, deadLetterQueue: { enable: true }, errorQueue: { enable: true } };
+    expect(getConfigProviders(options)).toEqual({ provide: POSTINO_MODULE_OPTIONS, useValue: options });
   });
 
   it('getAsyncConfigProviders provides the options factory', () => {
-    const useFactory = () => ({});
+    const useFactory = (): PostinoOptionsInput => ({ deadLetterQueue: { enable: true }, errorQueue: { enable: true } });
     expect(getAsyncConfigProviders({ useFactory, inject: ['X'] })).toEqual({ provide: POSTINO_MODULE_OPTIONS, useFactory, inject: ['X'] });
   });
 
   it('cluster options reach the core publisher and subscriber factories unchanged', () => {
     const options: PostinoOptionsInput = {
       connection: { password: 'secret' },
+      deadLetterQueue: { enable: true },
+      errorQueue: { enable: true },
       cluster: { rootNodes: [{ host: 'n1', port: 7000 }, 'redis://n2:7001'], useReplicas: true },
     };
     const publisher = vi.spyOn(PostinoPublisherFactory, 'getInstance').mockReturnValue({} as any);
@@ -120,7 +123,7 @@ describe('providers', () => {
 
 describe('PostinoModule', () => {
   it('forRoot registers a global module exporting the publisher', () => {
-    const module = PostinoModule.forRoot({});
+    const module = PostinoModule.forRoot({ deadLetterQueue: { enable: true }, errorQueue: { enable: true } });
 
     expect(module.global).toBe(true);
     expect(module.providers).toContain(PostinoExplorer);
@@ -130,7 +133,11 @@ describe('PostinoModule', () => {
   it('forRootAsync passes imports and extra providers through', () => {
     class ConfigModule {}
     const extra = { provide: 'EXTRA', useValue: 1 };
-    const module = PostinoModule.forRootAsync({ imports: [ConfigModule], providers: [extra], useFactory: () => ({}) });
+    const module = PostinoModule.forRootAsync({
+      imports: [ConfigModule],
+      providers: [extra],
+      useFactory: () => ({ deadLetterQueue: { enable: true }, errorQueue: { enable: true } }),
+    });
 
     expect(module.imports).toEqual([ConfigModule]);
     expect(module.providers).toContain(extra);

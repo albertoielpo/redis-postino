@@ -3,10 +3,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resolveOptions } from '../src/index.js';
 import { createRedisClient, isConnectionUsable, LazyRedisConnection, safeQuit } from '../src/utils/connection.utils.js';
 import { createdClients, createMockLogger, fakeCreateClient, FakeRedisClient, resetFakeClients } from './helpers/fake-redis.js';
+import { QUEUES, withQueues } from './helpers/options.js';
 
 vi.mock('redis', () => ({ createClient: vi.fn() }));
 
-const options = resolveOptions();
+const options = resolveOptions(QUEUES);
 
 describe('connection.utils', () => {
   let logger: ReturnType<typeof createMockLogger>;

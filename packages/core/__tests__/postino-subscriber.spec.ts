@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { PostinoSubscriber, resolveOptions } from '../src/index.js';
 import { PostinoQueueFactory } from '../src/factories/postino-queue.factory.js';
 import { clientsOf, createMockLogger, fakeCreateClient, flush, resetFakeClients } from './helpers/fake-redis.js';
+import { QUEUES, withQueues } from './helpers/options.js';
 
 vi.mock('redis', () => ({ createClient: vi.fn() }));
 
@@ -31,7 +32,7 @@ describe('PostinoSubscriber', () => {
   });
 
   it('connects at construction with a client named after the instance', async () => {
-    subscriber = new PostinoSubscriber(resolveOptions(), logger);
+    subscriber = new PostinoSubscriber(resolveOptions(QUEUES), logger);
     await flush();
 
     expect(clientsOf('subscriber')).toHaveLength(1);
@@ -40,7 +41,7 @@ describe('PostinoSubscriber', () => {
   });
 
   it('subscribes to the instance channel and runs the handler with the message data', async () => {
-    subscriber = new PostinoSubscriber(resolveOptions(), logger);
+    subscriber = new PostinoSubscriber(resolveOptions(QUEUES), logger);
     const handler = vi.fn();
 
     await expect(subscriber.subscribe('orders', handler)).resolves.toBe(true);
@@ -52,7 +53,7 @@ describe('PostinoSubscriber', () => {
   });
 
   it('awaits async handlers', async () => {
-    subscriber = new PostinoSubscriber(resolveOptions(), logger);
+    subscriber = new PostinoSubscriber(resolveOptions(QUEUES), logger);
     let done = false;
     await subscriber.subscribe('orders', async () => {
       await flush();
@@ -65,7 +66,7 @@ describe('PostinoSubscriber', () => {
   });
 
   it('rejects channel names containing ":" without registering them', async () => {
-    subscriber = new PostinoSubscriber(resolveOptions(), logger);
+    subscriber = new PostinoSubscriber(resolveOptions(QUEUES), logger);
 
     await expect(subscriber.subscribe('bad:name', vi.fn())).resolves.toBe(false);
     expect(subscriber.isSubscribed('bad:name')).toBe(false);
@@ -73,7 +74,7 @@ describe('PostinoSubscriber', () => {
 
   // regression(H2) + B5: error queue payload { subscribeChannel, message, error } with real error details
   it('regression(H2): sends failed executions to the error queue', async () => {
-    subscriber = new PostinoSubscriber(resolveOptions(), logger);
+    subscriber = new PostinoSubscriber(resolveOptions(QUEUES), logger);
     await subscriber.subscribe('orders', () => {
       throw new Error('handler failed');
     });
@@ -81,7 +82,7 @@ describe('PostinoSubscriber', () => {
 
     await current().deliver(instanceChannel('orders'), raw);
 
-    expect(queue.addToQueue).toHaveBeenCalledWith(resolveOptions().errorQueue, expect.any(String), {
+    expect(queue.addToQueue).toHaveBeenCalledWith(resolveOptions(QUEUES).errorQueue, expect.any(String), {
       subscribeChannel: instanceChannel('orders'),
       message: raw,
       error: { name: 'Error', message: 'handler failed', stack: expect.any(String) },
@@ -89,7 +90,7 @@ describe('PostinoSubscriber', () => {
   });
 
   it('sends unparsable messages to the error queue', async () => {
-    subscriber = new PostinoSubscriber(resolveOptions(), logger);
+    subscriber = new PostinoSubscriber(resolveOptions(QUEUES), logger);
     await subscriber.subscribe('orders', vi.fn());
 
     await current().deliver(instanceChannel('orders'), 'not-json');
@@ -99,7 +100,7 @@ describe('PostinoSubscriber', () => {
 
   // B4: node-redis re-subscribes by itself; subscribing again must never duplicate executions
   it('B4: executes a message exactly once, even if the channel is subscribed twice', async () => {
-    subscriber = new PostinoSubscriber(resolveOptions(), logger);
+    subscriber = new PostinoSubscriber(resolveOptions(QUEUES), logger);
     const handler = vi.fn();
     await subscriber.subscribe('orders', handler);
     await subscriber.subscribe('orders', handler);
@@ -118,7 +119,7 @@ describe('PostinoSubscriber', () => {
       client.connect.mockRejectedValue(new Error('ECONNREFUSED'));
       return client as any;
     });
-    subscriber = new PostinoSubscriber(resolveOptions(), logger);
+    subscriber = new PostinoSubscriber(resolveOptions(QUEUES), logger);
     const handler = vi.fn();
 
     await expect(subscriber.subscribe('orders', handler)).resolves.toBe(false);
@@ -134,7 +135,7 @@ describe('PostinoSubscriber', () => {
   // regression(H5d): self-healing after the client is terminated
   it('regression(H5d): replaces a terminated client after the healing delay and re-subscribes every channel', async () => {
     vi.useFakeTimers();
-    subscriber = new PostinoSubscriber(resolveOptions(), logger);
+    subscriber = new PostinoSubscriber(resolveOptions(QUEUES), logger);
     const orders = vi.fn();
     const users = vi.fn();
     await subscriber.subscribe('orders', orders);
@@ -158,7 +159,7 @@ describe('PostinoSubscriber', () => {
 
   it('backs off when healing keeps failing', async () => {
     vi.useFakeTimers();
-    subscriber = new PostinoSubscriber(resolveOptions(), logger);
+    subscriber = new PostinoSubscriber(resolveOptions(QUEUES), logger);
     await vi.advanceTimersByTimeAsync(0);
     vi.mocked(createClient).mockImplementation((opts: any) => {
       const client = fakeCreateClient(opts);
@@ -179,7 +180,7 @@ describe('PostinoSubscriber', () => {
   // B2: shutdown unsubscribes the instance channels; B3: no healing after an intentional shutdown
   it('B2/B3: shutdown unsubscribes the instance channels, closes, and never heals afterwards', async () => {
     vi.useFakeTimers();
-    subscriber = new PostinoSubscriber(resolveOptions(), logger);
+    subscriber = new PostinoSubscriber(resolveOptions(QUEUES), logger);
     await subscriber.subscribe('orders', vi.fn());
     const client = current();
 
@@ -195,7 +196,7 @@ describe('PostinoSubscriber', () => {
   });
 
   it('B1: logs the subscription once, without undefined', async () => {
-    subscriber = new PostinoSubscriber(resolveOptions(), logger);
+    subscriber = new PostinoSubscriber(resolveOptions(QUEUES), logger);
     await subscriber.subscribe('orders', vi.fn());
 
     expect(logger.log).toHaveBeenCalledWith('Subscribed to channel orders');

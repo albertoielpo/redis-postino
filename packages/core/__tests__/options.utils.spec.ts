@@ -1,14 +1,32 @@
 import { describe, expect, it } from 'vitest';
 import { DEFAULT_OPTIONS } from '../src/index.js';
 import { buildReconnectStrategy, resolveOptions, toRedisClientOptions } from '../src/utils/options.utils.js';
+import { withQueues } from './helpers/options.js';
 
 describe('resolveOptions', () => {
-  it('applies every default when no input is given', () => {
-    expect(resolveOptions()).toEqual({ ...DEFAULT_OPTIONS, clientOptions: undefined });
+  it('applies every default when only the queue flags are given', () => {
+    expect(resolveOptions({ deadLetterQueue: { enable: true }, errorQueue: { enable: false } })).toEqual({
+      ...DEFAULT_OPTIONS,
+      deadLetterQueue: { ...DEFAULT_OPTIONS.deadLetterQueue, enable: true },
+      errorQueue: { ...DEFAULT_OPTIONS.errorQueue, enable: false },
+      clientOptions: undefined,
+    });
+  });
+
+  it.each([
+    ['no input', undefined],
+    ['no queue options', {}],
+    ['deadLetterQueue missing', { errorQueue: { enable: true } }],
+    ['errorQueue missing', { deadLetterQueue: { enable: true } }],
+    ['deadLetterQueue.enable missing', { deadLetterQueue: { name: 'dlq' }, errorQueue: { enable: true } }],
+    ['errorQueue.enable missing', { deadLetterQueue: { enable: true }, errorQueue: { name: 'eq' } }],
+    ['enable not a boolean', { deadLetterQueue: { enable: 'true' }, errorQueue: { enable: true } }],
+  ])('throws when the queue enable flag is not set: %s', (_, input) => {
+    expect(() => resolveOptions(input as any)).toThrow(/'enable' is required/);
   });
 
   it('keeps the default reconnect options when only the host is overridden', () => {
-    const options = resolveOptions({ connection: { host: 'redis.local' } });
+    const options = resolveOptions(withQueues({ connection: { host: 'redis.local' } }));
 
     expect(options.connection.host).toBe('redis.local');
     expect(options.connection.port).toBe(6379);
@@ -18,19 +36,19 @@ describe('resolveOptions', () => {
   it('merges partial reconnect and queue options', () => {
     const options = resolveOptions({
       connection: { reconnect: { maxAttempts: 3 } },
-      deadLetterQueue: { name: 'redis-comm-dlq' },
-      errorQueue: { enable: false },
+      deadLetterQueue: { enable: true, name: 'redis-comm-dlq' },
+      errorQueue: { enable: false, ttlInSeconds: 60 },
       dispatchAndClose: true,
     });
 
     expect(options.connection.reconnect).toEqual({ maxAttempts: 3, delayMs: 1000 });
-    expect(options.deadLetterQueue).toEqual({ ...DEFAULT_OPTIONS.deadLetterQueue, name: 'redis-comm-dlq' });
-    expect(options.errorQueue).toEqual({ ...DEFAULT_OPTIONS.errorQueue, enable: false });
+    expect(options.deadLetterQueue).toEqual({ ...DEFAULT_OPTIONS.deadLetterQueue, enable: true, name: 'redis-comm-dlq' });
+    expect(options.errorQueue).toEqual({ ...DEFAULT_OPTIONS.errorQueue, enable: false, ttlInSeconds: 60 });
     expect(options.dispatchAndClose).toBe(true);
   });
 
   it('does not mutate the defaults', () => {
-    resolveOptions({ connection: { host: 'x', reconnect: { delayMs: 1 } } });
+    resolveOptions(withQueues({ connection: { host: 'x', reconnect: { delayMs: 1 } } }));
 
     expect(DEFAULT_OPTIONS.connection.host).toBe('localhost');
     expect(DEFAULT_OPTIONS.connection.reconnect.delayMs).toBe(1000);
@@ -52,7 +70,7 @@ describe('buildReconnectStrategy', () => {
 describe('toRedisClientOptions', () => {
   it('maps the connection options to node-redis options', () => {
     const options = toRedisClientOptions(
-      resolveOptions({ connection: { host: 'h', port: 1234, username: 'u', password: 'p', db: 2 } }),
+      resolveOptions(withQueues({ connection: { host: 'h', port: 1234, username: 'u', password: 'p', db: 2 } })),
       'postino:publisher:id',
     );
 
@@ -75,7 +93,7 @@ describe('toRedisClientOptions', () => {
   });
 
   it('disables keep-alive and command timeout when set to 0', () => {
-    const options = toRedisClientOptions(resolveOptions({ connection: { keepAlive: 0, commandTimeout: 0 } }));
+    const options = toRedisClientOptions(resolveOptions(withQueues({ connection: { keepAlive: 0, commandTimeout: 0 } })));
 
     expect((options.socket as any).keepAlive).toBe(false);
     expect((options.socket as any).keepAliveInitialDelay).toBeUndefined();
@@ -83,19 +101,21 @@ describe('toRedisClientOptions', () => {
   });
 
   it('enables TLS with defaults or with custom TLS options', () => {
-    expect((toRedisClientOptions(resolveOptions({ connection: { tls: true } })).socket as any).tls).toBe(true);
+    expect((toRedisClientOptions(resolveOptions(withQueues({ connection: { tls: true } }))).socket as any).tls).toBe(true);
 
-    const socket = toRedisClientOptions(resolveOptions({ connection: { tls: { servername: 'redis.example.com' } } })).socket as any;
+    const socket = toRedisClientOptions(resolveOptions(withQueues({ connection: { tls: { servername: 'redis.example.com' } } }))).socket as any;
     expect(socket.tls).toBe(true);
     expect(socket.servername).toBe('redis.example.com');
   });
 
   it('merges clientOptions last, socket included', () => {
     const options = toRedisClientOptions(
-      resolveOptions({
-        connection: { host: 'h' },
-        clientOptions: { password: 'override', RESP: 2, socket: { connectTimeout: 42 } },
-      }),
+      resolveOptions(
+        withQueues({
+          connection: { host: 'h' },
+          clientOptions: { password: 'override', RESP: 2, socket: { connectTimeout: 42 } },
+        }),
+      ),
     );
 
     expect(options.password).toBe('override');
