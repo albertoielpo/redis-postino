@@ -1,6 +1,6 @@
 {
   "name": "nestjs-redis-postino",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "NestJS module for redis-postino: decorator-based Redis pub/sub with load-balanced at-most-once delivery, broadcast, dead letter queue and error queue.",
   "keywords": [
     "nestjs",
@@ -39,7 +39,7 @@
     "audit:prod": "npm audit --omit=dev"
   },
   "dependencies": {
-    "redis-postino": "^1.0.0"
+    "redis-postino": "^1.1.0"
   },
   "devDependencies": {
     "@nestjs/common": "~12.6.2",
